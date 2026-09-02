@@ -1,4 +1,4 @@
-const PALETTE = ["#1e4a40", "#c45c26", "#355f86", "#8a5a2c", "#5b6b4a", "#7a3b3b", "#2f5f6b"];
+const PALETTE = ["#050599", "#3d3dcc", "#6b6be0", "#9494eb", "#b8b8f3", "#1a1ab0", "#5252d6"];
 const charts = {};
 
 const DEFS = {
@@ -180,7 +180,7 @@ function paintCharts(data) {
   const c = data.citation;
   const mixKey = $("mix-by").value === "tag" ? "mix_tag" : "mix_role";
   upsertChart("chart-capital", baseChart("line", p.charts.capital_over_time.labels, [{
-    label: "Capital", data: p.charts.capital_over_time.values, borderColor: PALETTE[0], backgroundColor: "rgba(30,74,64,0.15)", fill: true, tension: 0.25,
+    label: "Capital", data: p.charts.capital_over_time.values, borderColor: PALETTE[0], backgroundColor: "rgba(5, 5, 153, 0.15)", fill: true, tension: 0.25,
   }]));
   const mix = p.charts[mixKey];
   upsertChart("chart-mix", baseChart("doughnut", mix.labels, [{ data: mix.values, backgroundColor: PALETTE }]));

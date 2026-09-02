@@ -1,16 +1,16 @@
 :root {
-  --bg: #efe8d8;
-  --bg-2: #e7ddc8;
-  --surface: #fbf7ee;
-  --ink: #1b1712;
-  --muted: #6d6458;
-  --line: #d9cfbc;
-  --accent: #1e4a40;
-  --accent-2: #c45c26;
-  --author: #1e4a40;
-  --reviewer: #355f86;
-  --replicator: #c45c26;
-  --shadow: 0 18px 40px rgba(40, 28, 12, 0.08);
+  --bg: #ffffff;
+  --bg-2: #f4f4fb;
+  --surface: #ffffff;
+  --ink: #050599;
+  --muted: #5c5cb3;
+  --line: #d6d6f0;
+  --accent: #050599;
+  --accent-2: #3d3dcc;
+  --author: #050599;
+  --reviewer: #3d3dcc;
+  --replicator: #050599;
+  --shadow: 0 18px 40px rgba(5, 5, 153, 0.08);
   --radius: 18px;
 }
 
@@ -23,8 +23,8 @@ body {
   font-family: "Instrument Sans", system-ui, sans-serif;
   color: var(--ink);
   background:
-    radial-gradient(1200px 500px at 80% -10%, rgba(196, 92, 38, 0.12), transparent 50%),
-    radial-gradient(900px 420px at 0% 100%, rgba(30, 74, 64, 0.12), transparent 45%),
+    radial-gradient(1200px 500px at 80% -10%, rgba(5, 5, 153, 0.08), transparent 50%),
+    radial-gradient(900px 420px at 0% 100%, rgba(5, 5, 153, 0.08), transparent 45%),
     var(--bg);
 }
 
@@ -101,7 +101,7 @@ button.primary {
   width: 100%;
   border: 0;
   background: var(--accent);
-  color: #f7f1e4;
+  color: #ffffff;
   border-radius: 999px;
   padding: 11px 16px;
   font: inherit;
@@ -201,7 +201,7 @@ main { padding: 28px 32px 64px; min-width: 0; height: 100vh; overflow-y: auto; }
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(27, 23, 18, 0.28);
+  background: rgba(5, 5, 153, 0.28);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -214,7 +214,7 @@ main { padding: 28px 32px 64px; min-width: 0; height: 100vh; overflow-y: auto; }
 .spinner {
   width: 28px;
   height: 28px;
-  border: 3px solid rgba(251, 247, 238, 0.25);
+  border: 3px solid rgba(255, 255, 255, 0.25);
   border-top-color: var(--bg);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
