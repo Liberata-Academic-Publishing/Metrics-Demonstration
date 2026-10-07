@@ -145,6 +145,7 @@
 
     const incoming = new Array(M).fill(0);
     const citeCount = new Array(M).fill(0);
+    const citations = [];
     let nCitations = 0;
     for (let i = 1; i < M; i++) {
       const avail = i;
@@ -153,10 +154,12 @@
       if (!num) continue;
       const cited = choice(rng, [...Array(i).keys()], num);
       const w = 1 / num;
+      const year = papers[i].year;
       cited.forEach((j) => {
         incoming[j] += w;
         citeCount[j] += 1;
         nCitations += 1;
+        citations.push({ cited: j, year, weight: w });
       });
     }
 
@@ -193,10 +196,12 @@
         const s = raw.reduce((a, b) => a + b, 0);
         raw = raw.map((v) => v / s);
       }
-      const order = raw.map((v, k) => k).sort((a, b) => raw[a] - raw[b]);
+      const order = raw.map((v, k) => k).sort((a, b) => raw[b] - raw[a]);
       const roles = new Array(nOn).fill("author");
-      order.slice(0, Math.min(2, nOn)).forEach((k) => { roles[k] = "reviewer"; });
-      order.slice(2, Math.min(4, nOn)).forEach((k) => { roles[k] = "replicator"; });
+      if (nOn >= 2) roles[order[nOn - 1]] = "reviewer";
+      if (nOn >= 3) roles[order[nOn - 2]] = "reviewer";
+      if (nOn >= 4) roles[order[nOn - 3]] = "replicator";
+      if (nOn >= 5) roles[order[nOn - 4]] = "replicator";
       shares[i] = people.map((person, k) => ({ person, share: raw[k], role: roles[k] }));
     }
 
@@ -253,28 +258,24 @@
       }
     }
 
-    const years = [2020, 2021, 2022, 2023, 2024, 2025];
-    const snapshots = years.map((year) => {
-      const totals = new Array(N).fill(0);
-      for (let i = 0; i < M; i++) {
-        if (papers[i].year > year) continue;
-        for (let p = 0; p < N; p++) {
-          totals[p] += author[p][i] + reviewer[p][i] + replicator[p][i];
-        }
-      }
-      if (sharesDist === "uniform") {
-        const grand = totals.reduce((a, b) => a + b, 0);
-        const present = totals.filter((v) => v > 0).length || N;
-        const target = present ? grand / present : 0;
-        return totals.map((v) => (v > 0 ? target : 0));
-      }
-      return totals;
+    const byPaper = Array.from({ length: M }, () => new Map());
+    citations.forEach(({ cited, year, weight }) => {
+      byPaper[cited].set(year, (byPaper[cited].get(year) || 0) + weight);
+    });
+    const citationMass = byPaper.map((map) => {
+      const rows = [...map.entries()].sort((a, b) => a[0] - b[0]);
+      let cum = 0;
+      const total = rows.reduce((sum, [, weight]) => sum + weight, 0);
+      return rows.map(([year, weight]) => {
+        cum += weight;
+        return { year, cum, total };
+      });
     });
 
     return {
-      M, N, papers, topics, shares, incoming, citeCount, nCitations,
+      M, N, papers, topics, shares, incoming, citeCount, nCitations, citationMass,
       author, reviewer, replicator, retAuthor, retReviewer, retReplicator,
-      snapshots, years, settings: {
+      settings: {
         num_manuscripts: M,
         num_contributors: N,
         citation_density: density,
@@ -292,6 +293,131 @@
       t += corpus.author[person][i] + corpus.reviewer[person][i] + corpus.replicator[person][i];
     });
     return t;
+  }
+
+  function fractionAt(mass, year, paperYear) {
+    if (!mass.length) return year >= paperYear ? 1 : 0;
+    let cum = 0;
+    for (let i = 0; i < mass.length; i++) {
+      if (mass[i].year > year) break;
+      cum = mass[i].cum;
+    }
+    return mass[0].total > 0 ? cum / mass[0].total : 0;
+  }
+
+  function populationStd(values) {
+    if (!values.length) return 0;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    return Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
+  }
+
+  function capitalPaths(corpus, subset, paperSet) {
+    const paperCap = paperSet.map((i) => {
+      let s = 0;
+      subset.forEach((p) => {
+        s += corpus.author[p][i] + corpus.reviewer[p][i] + corpus.replicator[p][i];
+      });
+      return s;
+    });
+    let minY = Infinity;
+    let maxY = -Infinity;
+    paperSet.forEach((i, k) => {
+      if (paperCap[k] <= 1e-15) return;
+      const mass = corpus.citationMass[i];
+      if (!mass.length) {
+        minY = Math.min(minY, corpus.papers[i].year);
+        maxY = Math.max(maxY, corpus.papers[i].year);
+        return;
+      }
+      minY = Math.min(minY, mass[0].year);
+      maxY = Math.max(maxY, mass[mass.length - 1].year);
+    });
+    if (!Number.isFinite(minY)) return { years: [], series: [], paperSeries: paperCap.map(() => []) };
+    const years = [];
+    for (let y = minY; y <= maxY; y++) years.push(y);
+    const paperSeries = paperSet.map((i, k) => years.map((y) => paperCap[k] * fractionAt(corpus.citationMass[i], y, corpus.papers[i].year)));
+    const series = years.map((_, t) => paperSeries.reduce((sum, row) => sum + row[t], 0));
+    return { years, series, paperSeries };
+  }
+
+  function proportionalReturns(series) {
+    const returns = [];
+    for (let t = 1; t < series.length; t++) {
+      const prev = series[t - 1];
+      returns.push(prev > 1e-12 ? (series[t] - prev) / prev : 0);
+    }
+    return returns;
+  }
+
+  function fiedlerValue(neighbors, degrees, normalised) {
+    const n = degrees.length;
+    if (n < 2) return 0;
+    const shift = normalised ? 2 : Math.max(1, ...degrees) * 2;
+    const kernel = degrees.map((d) => (normalised ? Math.sqrt(Math.max(d, 0)) : 1));
+    const v = degrees.map((_, i) => ((i * 17) % 11) - 5);
+    const Lv = new Array(n);
+    const Mv = new Array(n);
+    function applyL(src, out) {
+      if (!normalised) {
+        for (let i = 0; i < n; i++) {
+          let acc = degrees[i] * src[i];
+          const nbrs = neighbors[i];
+          for (let k = 0; k < nbrs.length; k++) acc -= nbrs[k].w * src[nbrs[k].j];
+          out[i] = acc;
+        }
+        return;
+      }
+      for (let i = 0; i < n; i++) {
+        if (degrees[i] <= 0) {
+          out[i] = 0;
+          continue;
+        }
+        let acc = src[i];
+        const invDi = 1 / Math.sqrt(degrees[i]);
+        const nbrs = neighbors[i];
+        for (let k = 0; k < nbrs.length; k++) {
+          const j = nbrs[k].j;
+          if (degrees[j] <= 0) continue;
+          acc -= nbrs[k].w * src[j] * invDi / Math.sqrt(degrees[j]);
+        }
+        out[i] = acc;
+      }
+    }
+    function project(vec) {
+      let dot = 0;
+      let kk = 0;
+      for (let i = 0; i < n; i++) {
+        dot += vec[i] * kernel[i];
+        kk += kernel[i] * kernel[i];
+      }
+      if (kk <= 0) return;
+      const scale = dot / kk;
+      for (let i = 0; i < n; i++) vec[i] -= scale * kernel[i];
+    }
+    project(v);
+    let lambda = 0;
+    for (let iter = 0; iter < 80; iter++) {
+      applyL(v, Lv);
+      let norm2 = 0;
+      for (let i = 0; i < n; i++) {
+        Mv[i] = shift * v[i] - Lv[i];
+        norm2 += Mv[i] * Mv[i];
+      }
+      project(Mv);
+      norm2 = 0;
+      for (let i = 0; i < n; i++) norm2 += Mv[i] * Mv[i];
+      const norm = Math.sqrt(norm2) || 1;
+      for (let i = 0; i < n; i++) v[i] = Mv[i] / norm;
+      applyL(v, Lv);
+      let num = 0;
+      let den = 0;
+      for (let i = 0; i < n; i++) {
+        num += v[i] * Lv[i];
+        den += v[i] * v[i];
+      }
+      lambda = den > 0 ? num / den : 0;
+    }
+    return Math.max(0, lambda);
   }
 
   function computeMetrics(corpus, view) {
@@ -372,23 +498,33 @@
       .sort((a, b) => b.v - a.v)
       .slice(0, 24);
 
-    const capitalSeries = corpus.snapshots.map((snap) => subset.reduce((a, p) => a + snap[p], 0));
-    const returns = [];
-    for (let t = 1; t < capitalSeries.length; t++) {
-      const prev = capitalSeries[t - 1];
-      returns.push(prev > 1e-12 ? (capitalSeries[t] - prev) / prev : 0);
-    }
+    const paths = capitalPaths(corpus, subset, paperSet);
+    const capitalSeries = paths.series;
+    const returns = proportionalReturns(capitalSeries);
     const meanRet = returns.length ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-    const vol = returns.length
-      ? Math.sqrt(returns.reduce((a, r) => a + (r - meanRet) ** 2, 0) / returns.length)
-      : 0;
+    const vol = populationStd(returns);
     const first = capitalSeries.find((v) => v > 1e-12) || 0;
-    const last = capitalSeries[capitalSeries.length - 1] || 0;
+    const last = capitalSeries.length ? capitalSeries[capitalSeries.length - 1] : 0;
     const propReturn = first > 1e-12 ? (last - first) / first : 0;
-    const yearsSpan = Math.max(corpus.years.length - 1, 1);
+    const yearsSpan = Math.max(paths.years.length - 1, 1);
+    const absoluteChanges = [];
+    for (let t = 1; t < capitalSeries.length; t++) absoluteChanges.push(capitalSeries[t] - capitalSeries[t - 1]);
+    const meanAbsolute = absoluteChanges.length
+      ? absoluteChanges.reduce((a, b) => a + b, 0) / absoluteChanges.length
+      : 0;
     const skew = vol > 1e-12 && returns.length
       ? returns.reduce((a, r) => a + ((r - meanRet) / vol) ** 3, 0) / returns.length
       : 0;
+    let diversification = 1;
+    if (vol > 1e-12 && last > 1e-12) {
+      let weightedVol = 0;
+      paths.paperSeries.forEach((row) => {
+        const finalCap = row.length ? row[row.length - 1] : 0;
+        if (finalCap <= 1e-12) return;
+        weightedVol += (finalCap / last) * populationStd(proportionalReturns(row));
+      });
+      diversification = weightedVol / vol;
+    }
 
     const fmpReviewer = topics.map((topic) => {
       let a = 0;
@@ -422,7 +558,7 @@
     const hVals = [];
     const i10Vals = [];
     const gVals = [];
-    subset.slice(0, 12).forEach((p) => {
+    subset.forEach((p) => {
       const cites = [];
       corpus.shares.forEach((row, i) => {
         if (!paperMark.has(i)) return;
@@ -433,44 +569,71 @@
       gVals.push(gIndex(cites));
     });
 
-    const collab = new Array(N).fill(0).map(() => new Set());
-    const parent = [...Array(N).keys()];
+    const parent = new Map();
+    function ensure(x) {
+      if (!parent.has(x)) parent.set(x, x);
+    }
     function find(x) {
-      while (parent[x] !== x) {
-        parent[x] = parent[parent[x]];
-        x = parent[x];
+      let root = x;
+      while (parent.get(root) !== root) root = parent.get(root);
+      let cursor = x;
+      while (parent.get(cursor) !== root) {
+        const next = parent.get(cursor);
+        parent.set(cursor, root);
+        cursor = next;
       }
-      return x;
+      return root;
     }
     function union(a, b) {
       const pa = find(a);
       const pb = find(b);
-      if (pa !== pb) parent[pa] = pb;
+      if (pa !== pb) parent.set(pa, pb);
     }
+    const pairEven = new Map();
+    corpus.shares.forEach((row, i) => {
+      if (!paperMark.has(i)) return;
+      row.forEach((s) => ensure(s.person));
+      for (let a = 0; a < row.length; a++) {
+        for (let b = a + 1; b < row.length; b++) {
+          const p = row[a].person;
+          const q = row[b].person;
+          const lo = Math.min(p, q);
+          const hi = Math.max(p, q);
+          const key = `${lo}|${hi}`;
+          const shareSum = row[a].share + row[b].share;
+          const even = shareSum > 1e-15 ? (2 * Math.min(row[a].share, row[b].share)) / shareSum : 0;
+          const rec = pairEven.get(key) || { w: 0, n: 0, p: lo, q: hi };
+          rec.w += even;
+          rec.n += 1;
+          pairEven.set(key, rec);
+          union(p, q);
+        }
+      }
+    });
     let edges = 0;
     let weight = 0;
-    corpus.shares.forEach((row) => {
-      const people = row.map((s) => s.person);
-      people.forEach((p, i) => {
-        for (let j = i + 1; j < people.length; j++) {
-          const q = people[j];
-          if (!collab[p].has(q)) {
-            collab[p].add(q);
-            collab[q].add(p);
-            edges += 1;
-            union(p, q);
-          }
-          weight += 1;
-        }
-      });
+    pairEven.forEach((rec) => {
+      edges += 1;
+      weight += rec.n > 0 ? rec.w / rec.n : 0;
     });
-    const roots = new Set([...Array(N).keys()].map(find));
-    const maxTreeEdges = Math.max(N - roots.size, 1);
-    const str = edges / maxTreeEdges;
-    const wstr = weight / maxTreeEdges;
-    const degrees = collab.map((s) => s.size);
-    const minDeg = degrees.length ? Math.min(...degrees.filter((d) => d > 0), N) : 0;
-    const fiedler = roots.size > 1 ? 0 : (4 * minDeg) / N;
+    const involved = [...parent.keys()];
+    const componentCount = new Set(involved.map(find)).size;
+    const forest = Math.max(involved.length - componentCount, 0);
+    const str = forest > 0 ? edges / forest : 0;
+    const wstr = forest > 0 ? weight / forest : 0;
+    let fiedler = 0;
+    if (componentCount === 1 && involved.length >= 2) {
+      const indexOf = new Map(involved.map((id, idx) => [id, idx]));
+      const neighbors = involved.map(() => []);
+      pairEven.forEach((rec) => {
+        const i = indexOf.get(rec.p);
+        const j = indexOf.get(rec.q);
+        neighbors[i].push({ j, w: 1 });
+        neighbors[j].push({ j: i, w: 1 });
+      });
+      const degrees = neighbors.map((nbrs) => nbrs.length);
+      fiedler = fiedlerValue(neighbors, degrees, Boolean(view.normalised));
+    }
 
     const grand = totals.reduce((a, b) => a + b, 0);
     const scholarShares = totals.map((v) => (grand > 0 ? v / grand : 0));
@@ -516,15 +679,15 @@
         replicator_retraction_loss: metric(replicatorCap > 0 ? retP / replicatorCap : 0, "pct"),
         proportional_return: metric(propReturn),
         expected_proportional_returns: metric(meanRet),
-        expected_returns: metric(yearsSpan ? (last - first) / yearsSpan : 0),
-        returns_per_year: metric(yearsSpan ? propReturn / yearsSpan : 0),
+        expected_returns: metric(meanAbsolute),
+        returns_per_year: metric(paths.years.length > 1 ? propReturn / yearsSpan : 0),
         volatility: metric(vol),
         sharpe_ratio: metric(vol > 1e-12 ? meanRet / vol : 0),
-        arc: metric(academic > 1e-12 && returns.length ? returns[returns.length - 1] / academic : 0),
+        arc: metric(last > 1e-12 && returns.length ? returns[returns.length - 1] / last : 0),
         risk_asymmetry: metric(skew),
-        diversification_ratio: metric(vol > 1e-12 ? 1 + 0.15 * scholar.entropy : 1),
+        diversification_ratio: metric(diversification),
         funding_efficiency: metric(view.funding > 0 ? academic / view.funding : 0),
-        time_efficiency: metric(capitalSeries.length ? last / capitalSeries.length : 0),
+        time_efficiency: metric(paths.years.length > 1 ? (last - first) / yearsSpan : 0),
         charts: {
           allocation_weights: {
             labels: weightPairs.map((row) => `Paper ${row.i + 1}`),
@@ -533,7 +696,7 @@
           mix_role: { labels: ["Authors", "Reviewers", "Replicators"], values: mixRole },
           mix_tag: { labels: topics, values: mixTag },
           capital_over_time: {
-            labels: corpus.years.map(String),
+            labels: paths.years.map(String),
             values: capitalSeries,
           },
         },
@@ -565,7 +728,7 @@
       },
       graph: {
         fiedler_value: metric(fiedler),
-        connected_components: metric(roots.size),
+        connected_components: metric(componentCount),
         spanning_tree_ratio: metric(str),
         weighted_spanning_tree_ratio: metric(wstr),
         relative_spanning_tree_ratio: metric(str > 1e-12 ? wstr / str : 0),

@@ -36,6 +36,20 @@ body {
   height: 100vh;
   overflow-y: auto;
 }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.brand img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  flex: none;
+}
+.brand .eyebrow { margin: 0 0 2px; }
+.brand h1 { margin: 0; }
 .eyebrow.updating::after {
   content: " · updating";
   letter-spacing: 0.08em;
