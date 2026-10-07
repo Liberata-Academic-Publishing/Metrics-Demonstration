@@ -29,7 +29,7 @@ const DEFS = {
   time_efficiency: ["Time efficiency", "Academic capital accumulated per year between the first and last citation year."],
   reviewer_fmp_mean: ["Reviewer FMP", "Average fair market price of review capital across topics. JS demo: reviewer capital / author capital by topic."],
   replicator_fmp_mean: ["Replicator FMP", "Average fair market price of replication capital across topics. JS demo: replicator capital / author capital by topic."],
-  hhi_discrepancy: ["HHI discrepancy", "Absolute gap between field-wide share inequality and the selected topic subset."],
+  hhi_discrepancy: ["HHI discrepancy", "Gap in share concentration between the current selection and the whole corpus. With all fields selected, this is the average gap between fields."],
   mean_citations: ["Mean citations", "Average incoming citations per paper in the current field filter."],
   max_citations: ["Max citations", "Most-cited paper in the current field filter."],
   mean_h_index: ["Mean h-index", "Average h-index of scholars in the current subset."],
