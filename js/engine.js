@@ -472,14 +472,34 @@
       });
     });
 
-    const rowHhi = [];
-    corpus.shares.forEach((row, i) => {
-      if (!paperMark.has(i)) return;
-      rowHhi.push(row.reduce((a, s) => a + s.share * s.share, 0));
-    });
-    const shareIneq = rowHhi.length ? rowHhi.reduce((a, b) => a + b, 0) / rowHhi.length : 0;
-    const allRowHhi = corpus.shares.map((row) => row.reduce((a, s) => a + s.share * s.share, 0));
-    const fieldIneq = allRowHhi.reduce((a, b) => a + b, 0) / Math.max(allRowHhi.length, 1);
+    function shareHhi(row) {
+      return row.reduce((sum, entry) => sum + entry.share * entry.share, 0);
+    }
+    function meanHhi(indices) {
+      if (!indices.length) return 0;
+      return indices.reduce((sum, i) => sum + shareHhi(corpus.shares[i]), 0) / indices.length;
+    }
+    const allIdx = papers.map((_, i) => i);
+    const fieldIneq = meanHhi(allIdx);
+    const shareIneq = meanHhi(paperSet);
+    let portfolioIdx = paperSet;
+    if (view.subsetMode !== "all") {
+      const held = paperSet.filter((i) => corpus.shares[i].some((entry) => subsetSet.has(entry.person)));
+      if (held.length) portfolioIdx = held;
+    }
+    let hhiDisc;
+    const topicSelected = Boolean(view.topic && view.topic !== "all");
+    if (topicSelected || view.subsetMode !== "all") {
+      hhiDisc = Math.abs(fieldIneq - meanHhi(portfolioIdx));
+    } else {
+      const groups = new Map();
+      papers.forEach((paper, i) => {
+        if (!groups.has(paper.primary)) groups.set(paper.primary, []);
+        groups.get(paper.primary).push(i);
+      });
+      const gaps = [...groups.values()].map((idx) => Math.abs(fieldIneq - meanHhi(idx)));
+      hhiDisc = gaps.length ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 0;
+    }
 
     const mixRole = [authorCap, reviewerCap, replicatorCap];
     const mixTag = topics.map((topic) => {
@@ -710,11 +730,13 @@
       },
       distribution: {
         share_splits_inequality: metric(shareIneq),
-        hhi_discrepancy: metric(Math.abs(fieldIneq - shareIneq)),
+        hhi_discrepancy: metric(hhiDisc),
         charts: {
           scholar_capital: {
-            labels: totals.map((_, i) => String(i + 1)),
-            values: scholarShares,
+            labels: scholarShares.map((value, i) => ({ value, i }))
+              .sort((a, b) => b.value - a.value)
+              .map((row) => String(row.i + 1)),
+            values: scholarShares.slice().sort((a, b) => b - a),
           },
         },
       },
