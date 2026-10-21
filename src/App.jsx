@@ -199,6 +199,7 @@ export default function App() {
                 linkNoun="citation links"
                 showRetracted={false}
                 compact
+                sameFieldCite
               />
             ) : null}
             {stage === 3 ? <CapitalMatrix matrix={data?.capitalMatrix} topics={corpus?.topics || []} /> : null}

@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import ChartCanvas from "./ChartCanvas";
+import { baseChart } from "../chartOptions";
+import { fmt } from "../metrics";
 import { seriesColor, themeColors } from "../theme";
 import useThemeColors from "../useTheme";
 
@@ -30,7 +33,7 @@ function buildModel(network, compact) {
   return { nodes, links };
 }
 
-function tick(model) {
+function tick(model, forceScale = 1, speedLimit = Infinity) {
   const { nodes, links } = model;
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
@@ -43,7 +46,7 @@ function tick(model) {
         dist2 = 0.25;
       }
       const dist = Math.sqrt(dist2);
-      const force = Math.min(1400 / dist2, 12);
+      const force = Math.min(1400 / dist2, 12) * forceScale;
       const fx = (dx / dist) * force;
       const fy = (dy / dist) * force;
       nodes[i].vx -= fx;
@@ -56,7 +59,7 @@ function tick(model) {
     const dx = link.target.x - link.source.x;
     const dy = link.target.y - link.source.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-    const force = (dist - 120) * 0.008;
+    const force = (dist - 120) * 0.008 * forceScale;
     const fx = (dx / dist) * force;
     const fy = (dy / dist) * force;
     link.source.vx += fx;
@@ -70,10 +73,15 @@ function tick(model) {
       node.vy = 0;
       return;
     }
-    node.vx += -node.x * 0.004;
-    node.vy += -node.y * 0.004;
+    node.vx += -node.x * 0.004 * forceScale;
+    node.vy += -node.y * 0.004 * forceScale;
     node.vx *= 0.78;
     node.vy *= 0.78;
+    const speed = Math.hypot(node.vx, node.vy);
+    if (speed > speedLimit) {
+      node.vx *= speedLimit / speed;
+      node.vy *= speedLimit / speed;
+    }
     node.x += node.vx;
     node.y += node.vy;
   });
@@ -148,7 +156,40 @@ function clampPan(view, model, width, height) {
   view.panY = clampAxis(view.panY, loY, hiY);
 }
 
-function draw(ctx, model, view, hoverId, topics, width, height, compact, colors) {
+function citerIds(model, focus) {
+  const ids = new Set();
+  if (!focus) return ids;
+  model.links.forEach((link) => {
+    if (link.target.id === focus.id && link.source.id !== focus.id) ids.add(link.source.id);
+  });
+  return ids;
+}
+
+function ring(ctx, node, pad, width, color) {
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(node.x, node.y, node.r + pad, 0, Math.PI * 2);
+  ctx.lineWidth = width;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+}
+
+function profileOf(node) {
+  return {
+    id: node.id,
+    label: node.label,
+    topic: node.topic,
+    papers: node.papers || [],
+    metrics: node.metrics || {
+      academicCapital: 0,
+      citations: node.citations || 0,
+      papers: 0,
+      hIndex: 0,
+    },
+  };
+}
+
+function draw(ctx, model, view, hoverId, selectedId, topics, width, height, compact, colors, sameFieldCite) {
   applyFrame(view, model, width, height);
   clampPan(view, model, width, height);
   const dpr = window.devicePixelRatio || 1;
@@ -161,26 +202,34 @@ function draw(ctx, model, view, hoverId, topics, width, height, compact, colors)
   ctx.translate(-(view.originX || 0), -(view.originY || 0));
 
   const focus = hoverId == null ? null : model.nodes.find((node) => node.id === hoverId);
-  const dimOthers = model.nodes.some((node) => !node.selected);
+  const citers = sameFieldCite && focus ? citerIds(model, focus) : null;
+  const dimOthers = !citers && model.nodes.some((node) => !node.selected);
+  const ringPad = compact ? 1.8 : 3.4;
+  const ringWidth = compact ? 0.9 : 1.5;
 
   model.links.forEach((link) => {
-    const hot = focus && (link.source.id === focus.id || link.target.id === focus.id);
-    const faded = dimOthers && !link.source.selected && !link.target.selected;
+    const hot = citers
+      ? link.target.id === focus.id && citers.has(link.source.id)
+      : Boolean(focus && (link.source.id === focus.id || link.target.id === focus.id));
+    const faded = citers
+      ? !hot
+      : dimOthers && !link.source.selected && !link.target.selected;
     ctx.beginPath();
     ctx.moveTo(link.source.x, link.source.y);
     ctx.lineTo(link.target.x, link.target.y);
     ctx.strokeStyle = hot ? colors.ink : colors.track;
-    ctx.globalAlpha = hot ? 0.85 : faded ? 0.18 : 0.55;
+    ctx.globalAlpha = hot ? 0.9 : faded ? (citers ? 0.07 : 0.18) : 0.55;
     ctx.lineWidth = compact
-      ? (hot ? 0.55 : 0.2) + Math.min(0.9, Math.sqrt(link.weight || 1) * 0.16)
-      : (hot ? 1.2 : 0.45) + Math.min(3.2, Math.sqrt(link.weight || 1) * 0.7);
+      ? (hot ? 0.7 : 0.2) + Math.min(0.9, Math.sqrt(link.weight || 1) * 0.16)
+      : (hot ? 1.35 : 0.45) + Math.min(3.2, Math.sqrt(link.weight || 1) * 0.7);
     ctx.stroke();
   });
   ctx.globalAlpha = 1;
 
   model.nodes.forEach((node) => {
-    const faded = dimOthers && !node.selected && node.id !== hoverId;
-    ctx.globalAlpha = faded ? 0.28 : 1;
+    const lit = !citers || node.id === focus.id || citers.has(node.id);
+    const faded = citers ? !lit : dimOthers && !node.selected && node.id !== hoverId;
+    ctx.globalAlpha = faded ? 0.14 : 1;
     ctx.beginPath();
     ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
     if (node.retracted) {
@@ -195,10 +244,15 @@ function draw(ctx, model, view, hoverId, topics, width, height, compact, colors)
       ctx.fillStyle = seriesColor(node.topic, topics, colors);
       ctx.fill();
     }
+    if (citers && citers.has(node.id)) ring(ctx, node, ringPad, ringWidth, colors.ink);
     if (node.id === hoverId) {
-      ctx.lineWidth = 2;
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = compact ? 1.5 : 2;
       ctx.strokeStyle = colors.ink;
       ctx.stroke();
+    } else if (node.id === selectedId) {
+      const pad = citers && citers.has(node.id) ? ringPad + (compact ? 1.7 : 2.8) : ringPad;
+      ring(ctx, node, pad, ringWidth, colors.brand);
     }
   });
   ctx.globalAlpha = 1;
@@ -232,16 +286,53 @@ export default function CitationNetwork({
   linkNoun = "links",
   showRetracted = true,
   compact = false,
+  sameFieldCite = false,
 }) {
   const canvasRef = useRef(null);
+  const closeRef = useRef(null);
   const viewRef = useRef({ panX: 0, panY: 0, zoom: 1 });
   const dragRef = useRef(null);
   const hoverRef = useRef(null);
+  const selectedRef = useRef(null);
+  const paintRef = useRef(() => {});
   const [tip, setTip] = useState(null);
   const [dragging, setDragging] = useState(false);
+  const [panel, setPanel] = useState(null);
   const colors = useThemeColors();
+  const citeConfig = useMemo(() => {
+    const rows = panel?.papers || [];
+    if (!rows.length) return null;
+    return baseChart(
+      "bar",
+      rows.map((paper) => paper.label),
+      [{
+        label: "Citations",
+        data: rows.map((paper) => paper.citations),
+        backgroundColor: colors.author,
+        borderWidth: 0,
+        maxBarThickness: 16,
+      }],
+      colors,
+      { plugins: { legend: { display: false } } },
+    );
+  }, [panel, colors]);
 
   const presentTopics = topics.filter((topic) => network?.nodes.some((node) => node.topic === topic));
+
+  useEffect(() => {
+    selectedRef.current = panel?.id ?? null;
+    paintRef.current();
+  }, [panel]);
+
+  useEffect(() => {
+    if (!panel) return undefined;
+    closeRef.current?.focus();
+    const onKey = (event) => {
+      if (event.key === "Escape") setPanel(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel]);
 
   useEffect(() => {
     if (!network || !canvasRef.current) return undefined;
@@ -250,7 +341,9 @@ export default function CitationNetwork({
     const model = buildModel(network, compact);
     viewRef.current = { panX: 0, panY: 0, zoom: 1, fit: 1, originX: 0, originY: 0, userMoved: false };
     hoverRef.current = null;
+    selectedRef.current = null;
     setTip(null);
+    setPanel(null);
 
     let raf = 0;
     let alive = true;
@@ -265,14 +358,29 @@ export default function CitationNetwork({
 
     const paint = () => {
       const rect = canvas.getBoundingClientRect();
-      draw(ctx, model, viewRef.current, hoverRef.current, topics, rect.width, rect.height, compact, themeColors());
+      draw(
+        ctx,
+        model,
+        viewRef.current,
+        hoverRef.current,
+        selectedRef.current,
+        topics,
+        rect.width,
+        rect.height,
+        compact,
+        themeColors(),
+        sameFieldCite,
+      );
     };
+    paintRef.current = paint;
 
-    const settle = (steps) => {
+    const settle = (steps, gentle = false) => {
       let left = steps;
       const run = () => {
         if (!alive || left <= 0) return;
-        tick(model);
+        const progress = (steps - left) / Math.max(steps - 1, 1);
+        const forceScale = gentle ? 0.32 * (1 - progress) ** 2 : 1;
+        tick(model, forceScale, gentle ? 1.15 : Infinity);
         paint();
         left -= 1;
         raf = requestAnimationFrame(run);
@@ -282,7 +390,17 @@ export default function CitationNetwork({
     };
 
     size();
-    settle(220);
+    if (compact) {
+      for (let i = 0; i < 190; i++) tick(model);
+      model.nodes.forEach((node) => {
+        node.vx *= 0.18;
+        node.vy *= 0.18;
+      });
+      paint();
+      settle(58, true);
+    } else {
+      settle(220);
+    }
 
     const resize = () => {
       size();
@@ -299,14 +417,19 @@ export default function CitationNetwork({
     const onDown = (event) => {
       const { x, y, rect } = point(event);
       const node = hitNode(model, viewRef.current, rect.width, rect.height, x, y);
-      viewRef.current.userMoved = true;
       if (node) {
         node.pinned = true;
-        dragRef.current = { kind: "node", id: node.id, x, y, originX: node.x, originY: node.y };
+        dragRef.current = { kind: "node", id: node.id, x, y, originX: node.x, originY: node.y, moved: false };
       } else {
-        dragRef.current = { kind: "pan", x, y, panX: viewRef.current.panX, panY: viewRef.current.panY };
+        dragRef.current = {
+          kind: "pan",
+          x,
+          y,
+          panX: viewRef.current.panX,
+          panY: viewRef.current.panY,
+          moved: false,
+        };
       }
-      setDragging(true);
       canvas.setPointerCapture(event.pointerId);
     };
 
@@ -319,6 +442,7 @@ export default function CitationNetwork({
         if (hoverRef.current !== next) {
           hoverRef.current = next;
           paint();
+          const citers = sameFieldCite && node ? citerIds(model, node).size : null;
           setTip(node ? {
             x: x + 14,
             y: y + 14,
@@ -328,11 +452,18 @@ export default function CitationNetwork({
             citations: node.citations,
             retracted: node.retracted,
             detail: node.detail,
+            citers,
           } : null);
         } else if (node) {
           setTip((current) => (current ? { ...current, x: x + 14, y: y + 14 } : current));
         }
         return;
+      }
+      if (!drag.moved) {
+        if (Math.hypot(x - drag.x, y - drag.y) <= 4) return;
+        drag.moved = true;
+        viewRef.current.userMoved = true;
+        setDragging(true);
       }
       if (drag.kind === "pan") {
         viewRef.current.panX = drag.panX + (x - drag.x);
@@ -355,7 +486,17 @@ export default function CitationNetwork({
       if (drag?.kind === "node") {
         const node = model.nodes.find((item) => item.id === drag.id);
         if (node) node.pinned = false;
-        settle(50);
+        if (sameFieldCite && node && !drag.moved) {
+          selectedRef.current = node.id;
+          setPanel(profileOf(node));
+          paint();
+        } else {
+          settle(compact ? 46 : 50, compact);
+        }
+      } else if (sameFieldCite && drag?.kind === "pan" && !drag.moved) {
+        selectedRef.current = null;
+        setPanel(null);
+        paint();
       }
       dragRef.current = null;
       setDragging(false);
@@ -385,7 +526,7 @@ export default function CitationNetwork({
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointerleave", onLeave);
     };
-  }, [network, topics, compact]);
+  }, [network, topics, compact, sameFieldCite]);
 
   if (!network) return null;
   const papers = network.nodes.length;
@@ -411,12 +552,15 @@ export default function CitationNetwork({
           </li>
         ) : null}
       </ul>
+      {sameFieldCite ? (
+        <p className="network-note">Highlighted scholars cite the one under your pointer, from any field. Scholars who do not cite them stay dim.</p>
+      ) : null}
       <div className="network-stage">
         <canvas
           ref={canvasRef}
-          className={dragging ? "is-dragging" : undefined}
+          className={[dragging ? "is-dragging" : "", sameFieldCite && tip && !dragging ? "is-pointing" : ""].filter(Boolean).join(" ") || undefined}
           role="img"
-          aria-label={`${title}. ${papers} ${nodeNoun} and ${links} ${linkNoun}. Drag a node or the background.`}
+          aria-label={`${title}. ${papers} ${nodeNoun} and ${links} ${linkNoun}. Drag a node or the background.${sameFieldCite ? " Click a scholar for details. Hover to highlight scholars who cite them. Other scholars stay dim." : ""}`}
         />
         {tip ? (
           <div className="network-tip" style={{ left: tip.x, top: tip.y }}>
@@ -424,8 +568,82 @@ export default function CitationNetwork({
             {tip.topic}{tip.year != null ? ` · ${tip.year}` : ""}
             <br />
             {tip.detail || `${tip.citations} citation${tip.citations === 1 ? "" : "s"}`}
+            {tip.citers != null ? (
+              <>
+                <br />
+                {tip.citers === 1 ? "1 scholar cites them" : `${tip.citers} scholars cite them`}
+              </>
+            ) : null}
             {tip.retracted ? <><br />Retracted</> : null}
           </div>
+        ) : null}
+        {panel ? (
+          <aside className="scholar-panel" role="dialog" aria-labelledby="scholar-panel-title">
+            <header>
+              <h3 id="scholar-panel-title">{panel.label}</h3>
+              <button ref={closeRef} type="button" className="panel-close" aria-label="Close scholar details" onClick={() => setPanel(null)}>
+                ×
+              </button>
+            </header>
+            <p className="scholar-field">
+              <span>Field</span>
+              {panel.topic || "—"}
+            </p>
+            <dl className="scholar-metrics">
+              <div>
+                <dt>Academic capital</dt>
+                <dd>{fmt(panel.metrics.academicCapital)}</dd>
+              </div>
+              <div>
+                <dt>Citations received</dt>
+                <dd>{fmt(panel.metrics.citations)}</dd>
+              </div>
+              <div>
+                <dt>Papers</dt>
+                <dd>{fmt(panel.metrics.papers)}</dd>
+              </div>
+              <div>
+                <dt>h-index</dt>
+                <dd>{fmt(panel.metrics.hIndex)}</dd>
+              </div>
+            </dl>
+            <div className="scholar-cite">
+              <h4>Citation distribution</h4>
+              {citeConfig ? (
+                <div className="scholar-cite-chart">
+                  <ChartCanvas config={citeConfig} />
+                </div>
+              ) : (
+                <p className="ac-note">No authored papers in this view.</p>
+              )}
+            </div>
+            <div className="scholar-papers">
+              <h4>Papers</h4>
+              {panel.papers.length ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Paper</th>
+                      <th className="num" title="Academic capital">AC</th>
+                      <th className="num">Citations</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {panel.papers.map((paper) => (
+                      <tr key={paper.id}>
+                        <td>{paper.label}</td>
+                        <td className="num">{fmt(paper.ac)}</td>
+                        <td className="num">{fmt(paper.citations)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="ac-note">No authored papers in this view.</p>
+              )}
+              <p className="ac-note">AC is this scholar’s academic capital on that paper.</p>
+            </div>
+          </aside>
         ) : null}
       </div>
     </figure>

@@ -787,16 +787,46 @@ function computeMetrics(corpus, view) {
     });
     return best;
   };
+  const scholarProfile = (person) => {
+    const papersOut = [];
+    viewPapers.forEach((paperIndex) => {
+      const authored = corpus.shares[paperIndex].some((row) => row.person === person && row.role === "author");
+      if (!authored) return;
+      papersOut.push({
+        id: paperIndex,
+        label: `Paper ${paperIndex + 1}`,
+        year: papers[paperIndex].year,
+        ac: corpus.author[person][paperIndex],
+        citations: citeInView[paperIndex],
+      });
+    });
+    papersOut.sort((a, b) => b.citations - a.citations || b.ac - a.ac || a.id - b.id);
+    return {
+      papers: papersOut,
+      metrics: {
+        academicCapital: papersOut.reduce((sum, paper) => sum + paper.ac, 0),
+        citations: incomingAuthors.get(person) || 0,
+        papers: papersOut.length,
+        hIndex: hIndex(papersOut.map((paper) => paper.citations)),
+      },
+    };
+  };
   const authorNetwork = {
-    nodes: [...authorSet].map((person) => ({
-      id: person,
-      label: `Scholar ${person + 1}`,
-      topic: homeField(person),
-      citations: incomingAuthors.get(person) || 0,
-      detail: `${incomingAuthors.get(person) || 0} citation${(incomingAuthors.get(person) || 0) === 1 ? "" : "s"} received`,
-      retracted: false,
-      selected: true,
-    })),
+    nodes: [...authorSet].map((person) => {
+      const received = incomingAuthors.get(person) || 0;
+      const profile = scholarProfile(person);
+      return {
+        id: person,
+        label: `Scholar ${person + 1}`,
+        topic: homeField(person),
+        citations: received,
+        detail: `${received} citation${received === 1 ? "" : "s"} received`,
+        papers: profile.papers,
+        metrics: profile.metrics,
+        retracted: false,
+        selected: true,
+      };
+    }),
     links: [...citeWeight.entries()].map(([key, weight]) => {
       const [source, target] = key.split("|").map(Number);
       return { source, target, weight };
