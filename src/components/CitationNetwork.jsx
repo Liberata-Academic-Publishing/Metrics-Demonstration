@@ -304,7 +304,7 @@ export default function CitationNetwork({
     if (!rows.length) return null;
     return baseChart(
       "bar",
-      rows.map((paper) => paper.label),
+      rows.map((paper) => paper.short || paper.label),
       [{
         label: "Citations",
         data: rows.map((paper) => paper.citations),
@@ -374,13 +374,13 @@ export default function CitationNetwork({
     };
     paintRef.current = paint;
 
-    const settle = (steps, gentle = false) => {
+    const settle = (steps) => {
       let left = steps;
       const run = () => {
         if (!alive || left <= 0) return;
         const progress = (steps - left) / Math.max(steps - 1, 1);
-        const forceScale = gentle ? 0.32 * (1 - progress) ** 2 : 1;
-        tick(model, forceScale, gentle ? 1.15 : Infinity);
+        const forceScale = 0.32 * (1 - progress) ** 2;
+        tick(model, forceScale, 1.15);
         paint();
         left -= 1;
         raf = requestAnimationFrame(run);
@@ -390,17 +390,13 @@ export default function CitationNetwork({
     };
 
     size();
-    if (compact) {
-      for (let i = 0; i < 190; i++) tick(model);
-      model.nodes.forEach((node) => {
-        node.vx *= 0.18;
-        node.vy *= 0.18;
-      });
-      paint();
-      settle(58, true);
-    } else {
-      settle(220);
-    }
+    for (let i = 0; i < 190; i++) tick(model);
+    model.nodes.forEach((node) => {
+      node.vx *= 0.18;
+      node.vy *= 0.18;
+    });
+    paint();
+    settle(58);
 
     const resize = () => {
       size();
@@ -491,7 +487,7 @@ export default function CitationNetwork({
           setPanel(profileOf(node));
           paint();
         } else {
-          settle(compact ? 46 : 50, compact);
+          settle(46);
         }
       } else if (sameFieldCite && drag?.kind === "pan" && !drag.moved) {
         selectedRef.current = null;
@@ -531,6 +527,7 @@ export default function CitationNetwork({
   if (!network) return null;
   const papers = network.nodes.length;
   const links = network.links.length;
+  const retractedVisible = showRetracted && network.nodes.some((node) => node.retracted);
 
   return (
     <figure className="figure network">
@@ -545,7 +542,7 @@ export default function CitationNetwork({
             {topic}
           </li>
         ))}
-        {showRetracted ? (
+        {retractedVisible ? (
           <li>
             <span className="network-swatch network-swatch-open" />
             Retracted

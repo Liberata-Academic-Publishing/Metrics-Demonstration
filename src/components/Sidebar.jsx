@@ -16,6 +16,11 @@ export default function Sidebar({ settings, mixBy, topics, contributors, onSetti
       <form onSubmit={(event) => event.preventDefault()}>
         <fieldset>
           <legend>Corpus</legend>
+          <p className="rail-note">
+            Four fields start from their OpenAlex profiles. Manuscripts sets how many papers are drawn.
+            Contributors and citation density scale team size and citation rate from those profiles.
+            1× retraction uses each field’s own rate. Credit inequality assigns shares. The smallest shares stand in as reviewers and replicators.
+          </p>
           <label>
             Manuscripts <output>{settings.numManuscripts}</output>
             <input
@@ -32,18 +37,18 @@ export default function Sidebar({ settings, mixBy, topics, contributors, onSetti
             <input
               type="range"
               min="16"
-              max="140"
+              max="180"
               step="1"
               value={settings.numContributors}
               onChange={(event) => set({ numContributors: Number(event.target.value) })}
             />
           </label>
           <label>
-            Citation density <output>{Number(settings.citationDensity).toFixed(2)}</output>
+            Citation density <output>{`${Number(settings.citationDensity).toFixed(2)}×`}</output>
             <input
               type="range"
-              min="0.1"
-              max="0.9"
+              min="0.25"
+              max="2.5"
               step="0.05"
               value={settings.citationDensity}
               onChange={(event) => set({ citationDensity: Number(event.target.value) })}
@@ -61,12 +66,12 @@ export default function Sidebar({ settings, mixBy, topics, contributors, onSetti
             />
           </label>
           <label>
-            Retraction rate <output>{`${Math.round(Number(settings.retractionRate) * 100)}%`}</output>
+            Retraction rate <output>{`${Number(settings.retractionRate).toFixed(0)}×`}</output>
             <input
               type="range"
               min="0"
-              max="0.2"
-              step="0.01"
+              max="40"
+              step="1"
               value={settings.retractionRate}
               onChange={(event) => set({ retractionRate: Number(event.target.value) })}
             />
