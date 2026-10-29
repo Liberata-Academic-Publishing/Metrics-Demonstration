@@ -1,6 +1,6 @@
 # Metrics Explorer (React)
 
-The browser builds a toy corpus and computes the metrics in JavaScript (`src/engine.js`). The page is a React app. No Python process and no JSON API.
+The page builds a synthetic corpus in the browser and computes the metrics in JavaScript (`src/engine.js`). Mathematics, computer science, medicine, and economics each start from an OpenAlex profile for team size, citation rate, within-field citations, citation inequality, and citation timing. The corpus sliders scale those profiles; at the default, the profiles are used as measured. Credit shares are assigned by the inequality control. Every citation stays inside the corpus, so the counts match the network. The page is a React app. No Python process and no JSON API.
 
 This is a **second implementation** of the explorer, not `liberata_metrics`. Numbers will not match `python -m website.app` exactly. Connected components use union-find. The Fiedler value is the algebraic connectivity of the co-authorship Laplacian. Spanning-tree ratios count collaboration edges rather than applying Kirchhoff's theorem.
 

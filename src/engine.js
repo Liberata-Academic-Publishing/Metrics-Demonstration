@@ -1,13 +1,4 @@
 /** Browser-side demo of the explorer metrics. Not the Python library. */
-const TOPICS = [
-  "Artificial intelligence", "Machine learning", "Natural language processing",
-  "Computer vision", "Quantum information", "Condensed matter physics",
-  "Astrophysics", "Climate science", "Genomics", "Immunology", "Neuroscience",
-  "Pharmacology", "Organic chemistry", "Materials science", "Microeconomics",
-  "Political science", "Sociology", "Linguistics", "Public health",
-  "Epidemiology", "Ecology", "Developmental biology", "Cryptography", "Control theory",
-];
-
 function mulberry32(seed) {
   let a = seed >>> 0;
   return function rng() {
@@ -112,97 +103,154 @@ function shareParams(slider) {
   return { sharesDist: "pareto", paretoAlpha: 0.45 + 4.2 * (1 - v) };
 }
 
+/** OpenAlex sample, articles 2013–2022. Sliders scale these profiles; 1× leaves them as measured. */
+const FIELD_PROFILES = [
+  {
+    name: "Mathematics",
+    meanCitations: 4.2,
+    gini: 0.44107142857142756,
+    homophily: 0.6764705882352942,
+    meanReferences: 25.214285714285715,
+    meanTeam: 2.12,
+    retractionRate: 0.0004658295299512325,
+    lag: [0, 18.36, 11.36, 15.36, 11.36, 16.36, 8.36, 5.36, 4.36, 0.36, 1.36, 1.36, 1.36, 0.36, 0.36, 0.36],
+  },
+  {
+    name: "Computer Science",
+    meanCitations: 10.28,
+    gini: 0.5994649805447464,
+    homophily: 0.4015748031496063,
+    meanReferences: 27.875,
+    meanTeam: 3.48,
+    retractionRate: 0.0023339790277129664,
+    lag: [0, 62.22, 42.22, 31.22, 27.22, 30.22, 15.22, 8.22, 7.22, 6.22, 5.22, 2.22, 1.22, 1.22, 1.22, 1.22],
+  },
+  {
+    name: "Medicine",
+    meanCitations: 7.48,
+    gini: 0.5275019098548512,
+    homophily: 0.855072463768116,
+    meanReferences: 27.76923076923077,
+    meanTeam: 4.92,
+    retractionRate: 0.0010906326092251495,
+    lag: [0, 11.66, 24.66, 19.66, 33.66, 23.66, 23.66, 15.66, 16.66, 10.66, 4.66, 5.66, 0.66, 0.66, 0.66, 0.66],
+  },
+  {
+    name: "Economics, Econometrics and Finance",
+    meanCitations: 12.56,
+    gini: 0.7206551410373061,
+    homophily: 0.5245901639344263,
+    meanReferences: 34.4,
+    meanTeam: 2.16,
+    retractionRate: 0.0004205185284904773,
+    lag: [0, 35.7, 24.7, 35.7, 22.7, 11.7, 14.7, 7.7, 6.7, 15.7, 4.7, 4.7, 1.7, 0.7, 0.7, 0.7],
+  },
+];
+
+const DEFAULT_MANUSCRIPTS = 40;
+const DEFAULT_CONTRIBUTORS = 58;
+
+export const CORPUS_DEFAULTS = {
+  numManuscripts: DEFAULT_MANUSCRIPTS,
+  numContributors: DEFAULT_CONTRIBUTORS,
+  citationDensity: 1,
+  retractionRate: 1,
+  creditInequality: 80,
+  seed: 105,
+};
+
+function apportion(total, weights) {
+  const n = weights.length;
+  const safe = Math.max(total, n);
+  const sum = weights.reduce((acc, weight) => acc + weight, 0) || 1;
+  const raw = weights.map((weight) => (safe * weight) / sum);
+  const counts = raw.map((value) => Math.max(1, Math.floor(value)));
+  let used = counts.reduce((acc, value) => acc + value, 0);
+  if (used > safe) {
+    while (used > safe) {
+      let maxIndex = 0;
+      for (let index = 1; index < counts.length; index++) {
+        if (counts[index] > counts[maxIndex]) maxIndex = index;
+      }
+      if (counts[maxIndex] <= 1) break;
+      counts[maxIndex] -= 1;
+      used -= 1;
+    }
+  } else {
+    const order = raw
+      .map((value, index) => ({ index, frac: value - Math.floor(value) }))
+      .sort((a, b) => b.frac - a.frac);
+    let cursor = 0;
+    while (used < safe) {
+      counts[order[cursor % order.length].index] += 1;
+      used += 1;
+      cursor += 1;
+    }
+  }
+  return counts;
+}
+
 function generateCorpus(settings) {
-  const M = clip(Math.round(settings.numManuscripts), 8, 120);
-  const N = clip(Math.round(settings.numContributors), 8, 180);
-  const density = clip(settings.citationDensity, 0.05, 1);
-  const retractionRate = clip(settings.retractionRate, 0, 0.3);
+  const M = clip(Math.round(settings.numManuscripts), 12, 100);
+  const N = clip(Math.round(settings.numContributors), 16, 180);
+  const density = clip(Number(settings.citationDensity), 0.25, 2.5);
+  const retractionScale = Math.max(0, Number(settings.retractionScale) || 0);
   const seed = settings.seed || 105;
   const rng = mulberry32(seed);
   const { sharesDist, paretoAlpha } = settings;
+  const peopleScale = N / DEFAULT_CONTRIBUTORS;
 
-  const nTopics = clip(Math.floor(M / 10) || 1, 1, TOPICS.length);
-  const topics = choice(rng, TOPICS, nTopics).map((_, index) => `Field ${index + 1}`);
+  const paperCounts = apportion(M, FIELD_PROFILES.map(() => 1));
+  const poolCounts = apportion(N, FIELD_PROFILES.map((field) => field.meanTeam));
+  const topics = FIELD_PROFILES.map((field) => field.name);
+  const profiles = {};
+  FIELD_PROFILES.forEach((field) => {
+    profiles[field.name] = field;
+  });
+
+  let personCursor = 0;
+  const pools = poolCounts.map((size) => {
+    const people = [];
+    for (let index = 0; index < size; index++) people.push(personCursor + index);
+    personCursor += size;
+    return people;
+  });
 
   const papers = [];
-  for (let i = 0; i < M; i++) {
-    const year = 2020 + Math.floor(rng() * 5);
-    const month = randint(rng, 1, 12);
-    const nOn = randint(rng, 1, nTopics);
-    const paperTopics = choice(rng, topics, nOn);
-    papers.push({
-      index: i,
-      year,
-      date: `${year}-${String(month).padStart(2, "0")}-01`,
-      primary: paperTopics[0],
-      topics: paperTopics,
-      retracted: false,
-    });
-  }
-  papers.sort((a, b) => a.date.localeCompare(b.date) || a.index - b.index);
-  papers.forEach((p, i) => { p.index = i; });
-
-  const incoming = new Array(M).fill(0);
-  const citeCount = new Array(M).fill(0);
-  const citations = [];
-  let nCitations = 0;
-  for (let i = 1; i < M; i++) {
-    const avail = i;
-    const maxCitations = Math.floor(avail * density);
-    const num = maxCitations > 0 ? randint(rng, 0, maxCitations) : 0;
-    if (!num) continue;
-    const cited = choice(rng, [...Array(i).keys()], num);
-    const w = 1 / num;
-    const year = papers[i].year;
-    cited.forEach((j) => {
-      incoming[j] += w;
-      citeCount[j] += 1;
-      nCitations += 1;
-      citations.push({ citing: i, cited: j, year, weight: w });
-    });
-  }
-
-  let nRetract = retractionRate > 0 ? Math.ceil(retractionRate * M - 1e-12) : 0;
-  nRetract = Math.min(nRetract, M);
-  const citedPapers = papers.map((_, i) => i).filter((i) => citeCount[i] > 0);
-  const uncited = papers.map((_, i) => i).filter((i) => citeCount[i] === 0);
-  const pick = [];
-  if (citedPapers.length >= nRetract) {
-    pick.push(...choice(rng, citedPapers, nRetract));
-  } else {
-    pick.push(...citedPapers);
-    const extra = nRetract - citedPapers.length;
-    if (extra > 0 && uncited.length) pick.push(...choice(rng, uncited, Math.min(extra, uncited.length)));
-  }
-  pick.forEach((i) => { papers[i].retracted = true; });
-
-  const avg = clip(Math.round(N / 10), 4, 10);
-  const std = Math.max(2, Math.floor(avg / 2));
-  const shares = [];
-  for (let i = 0; i < M; i++) {
-    let nOn = Math.round(normal(rng, avg, std));
-    nOn = clip(nOn, 1, N);
-    const people = choice(rng, [...Array(N).keys()], nOn);
-    let raw;
-    if (sharesDist === "uniform") {
-      raw = people.map(() => 1 / nOn);
-    } else if (sharesDist === "dirichlet") {
-      raw = people.map(() => -Math.log(Math.max(rng(), 1e-12)));
-      const s = raw.reduce((a, b) => a + b, 0);
-      raw = raw.map((v) => v / s);
-    } else {
-      raw = people.map(() => (Math.pow(Math.max(rng(), 1e-12), -1 / paretoAlpha) - 1) + 1e-12);
-      const s = raw.reduce((a, b) => a + b, 0);
-      raw = raw.map((v) => v / s);
+  FIELD_PROFILES.forEach((field, fieldIndex) => {
+    const count = paperCounts[fieldIndex];
+    const pool = pools[fieldIndex];
+    const teamMean = Math.max(1, field.meanTeam * peopleScale);
+    const teamStd = 0.35;
+    for (let k = 0; k < count; k++) {
+      const year = 2013 + Math.round((k / Math.max(count - 1, 1)) * 9);
+      const month = randint(rng, 1, 12);
+      let nOn = Math.round(normal(rng, teamMean, teamStd));
+      nOn = clip(nOn, 1, pool.length);
+      const people = choice(rng, pool, nOn);
+      papers.push({
+        index: papers.length,
+        year,
+        date: `${year}-${String(month).padStart(2, "0")}-01`,
+        primary: field.name,
+        topics: [field.name],
+        retracted: rng() < Math.min(0.5, field.retractionRate * retractionScale),
+        people,
+      });
     }
-    const order = raw.map((v, k) => k).sort((a, b) => raw[b] - raw[a]);
-    const roles = new Array(nOn).fill("author");
-    if (nOn >= 2) roles[order[nOn - 1]] = "reviewer";
-    if (nOn >= 3) roles[order[nOn - 2]] = "reviewer";
-    if (nOn >= 4) roles[order[nOn - 3]] = "replicator";
-    if (nOn >= 5) roles[order[nOn - 4]] = "replicator";
-    shares[i] = people.map((person, k) => ({ person, share: raw[k], role: roles[k] }));
-  }
+  });
+  papers.sort((a, b) => a.date.localeCompare(b.date) || a.index - b.index);
+  papers.forEach((paper, index) => { paper.index = index; });
+
+  const generated = closedCitations(papers, profiles, rng, density);
+  const citations = generated.citations;
+  const citeCount = generated.citeCount;
+  const incoming = citeCount.slice();
+  weightCitations(citations);
+  const received = receivedCapital(citations, M);
+  const shares = papers.map((paper) => (
+    paper.people.length ? shareRow(rng, paper.people, sharesDist, paretoAlpha) : []
+  ));
 
   const author = Array.from({ length: N }, () => new Array(M).fill(0));
   const reviewer = Array.from({ length: N }, () => new Array(M).fill(0));
@@ -223,56 +271,44 @@ function generateCorpus(settings) {
   }
 
   for (let i = 0; i < M; i++) {
-    const impact = incoming[i];
     shares[i].forEach(({ person, share, role }) => {
-      addCap(person, i, role, share * impact, papers[i].retracted);
+      addCap(person, i, role, share * received[i], papers[i].retracted);
     });
   }
 
   function personTotal(person) {
-    let t = 0;
-    for (let i = 0; i < M; i++) t += author[person][i] + reviewer[person][i] + replicator[person][i];
-    return t;
+    let total = 0;
+    for (let i = 0; i < M; i++) total += author[person][i] + reviewer[person][i] + replicator[person][i];
+    return total;
   }
 
   if (sharesDist === "uniform") {
     const totals = [...Array(N).keys()].map(personTotal);
-    const grand = totals.reduce((a, b) => a + b, 0);
-    const target = N ? grand / N : 0;
-    for (let p = 0; p < N; p++) {
-      if (totals[p] > 1e-15) {
-        const scale = target / totals[p];
+    const grand = totals.reduce((acc, value) => acc + value, 0);
+    const evenTarget = N ? grand / N : 0;
+    for (let person = 0; person < N; person++) {
+      if (totals[person] > 1e-15) {
+        const scale = evenTarget / totals[person];
         for (let i = 0; i < M; i++) {
-          author[p][i] *= scale;
-          reviewer[p][i] *= scale;
-          replicator[p][i] *= scale;
-          retAuthor[p][i] *= scale;
-          retReviewer[p][i] *= scale;
-          retReplicator[p][i] *= scale;
+          author[person][i] *= scale;
+          reviewer[person][i] *= scale;
+          replicator[person][i] *= scale;
+          retAuthor[person][i] *= scale;
+          retReviewer[person][i] *= scale;
+          retReplicator[person][i] *= scale;
         }
-      } else if (target > 0) {
-        const even = target / M;
-        for (let i = 0; i < M; i++) author[p][i] += even;
+      } else if (evenTarget > 0) {
+        const even = evenTarget / M;
+        for (let i = 0; i < M; i++) author[person][i] += even;
       }
     }
   }
 
-  const byPaper = Array.from({ length: M }, () => new Map());
-  citations.forEach(({ cited, year, weight }) => {
-    byPaper[cited].set(year, (byPaper[cited].get(year) || 0) + weight);
-  });
-  const citationMass = byPaper.map((map) => {
-    const rows = [...map.entries()].sort((a, b) => a[0] - b[0]);
-    let cum = 0;
-    const total = rows.reduce((sum, [, weight]) => sum + weight, 0);
-    return rows.map(([year, weight]) => {
-      cum += weight;
-      return { year, cum, total };
-    });
-  });
+  const citationMass = citationMassFromEdges(citations, M);
+  papers.forEach((paper) => { delete paper.people; });
 
   return {
-    M, N, papers, topics, shares, incoming, citeCount, nCitations, citationMass, citations,
+    M, N, papers, topics, shares, incoming, citeCount, nCitations: citations.length, citationMass, citations,
     author, reviewer, replicator, retAuthor, retReviewer, retReplicator,
     settings: {
       num_manuscripts: M,
@@ -281,9 +317,144 @@ function generateCorpus(settings) {
       shares_dist: sharesDist,
       pareto_alpha: paretoAlpha,
       seed,
-      retraction_rate: retractionRate,
+      retraction_rate: retractionScale,
     },
   };
+}
+
+function shareRow(rng, people, sharesDist, paretoAlpha) {
+  const nOn = people.length;
+  let raw;
+  if (sharesDist === "uniform") {
+    raw = people.map(() => 1 / nOn);
+  } else if (sharesDist === "dirichlet") {
+    raw = people.map(() => -Math.log(Math.max(rng(), 1e-12)));
+    const total = raw.reduce((sum, value) => sum + value, 0);
+    raw = raw.map((value) => value / total);
+  } else {
+    raw = people.map(() => (Math.pow(Math.max(rng(), 1e-12), -1 / paretoAlpha) - 1) + 1e-12);
+    const total = raw.reduce((sum, value) => sum + value, 0);
+    raw = raw.map((value) => value / total);
+  }
+  const order = raw.map((value, index) => index).sort((a, b) => raw[b] - raw[a]);
+  const roles = new Array(nOn).fill("author");
+  if (nOn >= 2) roles[order[nOn - 1]] = "reviewer";
+  if (nOn >= 3) roles[order[nOn - 2]] = "reviewer";
+  if (nOn >= 4) roles[order[nOn - 3]] = "replicator";
+  if (nOn >= 5) roles[order[nOn - 4]] = "replicator";
+  return people.map((person, index) => ({ person, share: raw[index], role: roles[index] }));
+}
+
+function poisson(rng, lambda) {
+  if (lambda <= 0) return 0;
+  const limit = Math.exp(-lambda);
+  let count = 0;
+  let product = 1;
+  do {
+    count += 1;
+    product *= rng();
+  } while (product > limit && count < 40);
+  return count - 1;
+}
+
+function weightedSample(rng, weights, k) {
+  const ranked = [];
+  weights.forEach((weight, index) => {
+    if (weight > 0) ranked.push({ index, key: rng() ** (1 / weight) });
+  });
+  ranked.sort((a, b) => b.key - a.key);
+  return ranked.slice(0, k).map((row) => row.index);
+}
+
+/** Citations stay inside the corpus. Outgoing rates follow reference-list length.
+ *  Incoming rates, homophily, inequality, and timing follow each field's OpenAlex profile.
+ */
+function closedCitations(papers, fields, rng, density = 1) {
+  const list = Object.values(fields || {});
+  const averageOf = (key) => {
+    const values = list.map((field) => field[key] || 0).filter((value) => value > 0);
+    return values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1) || 1;
+  };
+  const citeAverage = averageOf("meanCitations");
+  const referenceAverage = averageOf("meanReferences");
+  const target = 5 * (Number.isFinite(density) ? density : 1);
+  const citeCount = new Array(papers.length).fill(0);
+  const citations = [];
+  const order = papers
+    .map((_, index) => index)
+    .sort((a, b) => papers[a].date.localeCompare(papers[b].date) || a - b);
+
+  order.forEach((citing) => {
+    const profile = fields?.[papers[citing].primary];
+    const earlier = order.filter((index) => papers[index].year < papers[citing].year);
+    if (!profile || !earlier.length) return;
+    const rate = target * (profile.meanReferences || referenceAverage) / referenceAverage;
+    const k = Math.min(poisson(rng, rate), earlier.length, 10);
+    const homophily = Math.min(0.92, Math.max(0.2, profile.homophily || 0.5));
+    const chosen = new Set();
+    let guard = 0;
+    while (chosen.size < k && guard < k * 12) {
+      guard += 1;
+      const stay = rng() < homophily;
+      let pool = earlier
+        .map((index, local) => ({ index, local }))
+        .filter((row) => !chosen.has(row.local) && ((papers[row.index].primary === papers[citing].primary) === stay));
+      if (!pool.length) {
+        if (stay) continue;
+        pool = earlier
+          .map((index, local) => ({ index, local }))
+          .filter((row) => !chosen.has(row.local));
+      }
+      const weights = pool.map((row) => {
+        const field = fields?.[papers[row.index].primary] || {};
+        const alpha = Math.min(1.7, 0.6 + 1.2 * (field.gini || 0.5));
+        const attract = ((field.meanCitations || citeAverage) / citeAverage) ** 2;
+        const gap = papers[citing].year - papers[row.index].year;
+        const lag = field.lag || [];
+        const lagWeight = lag[Math.min(gap, Math.max(lag.length - 1, 0))] || 1;
+        return (citeCount[row.index] + 1) ** alpha * attract * lagWeight;
+      });
+      const picked = weightedSample(rng, weights, 1)[0];
+      if (picked == null) break;
+      chosen.add(pool[picked].local);
+      citeCount[pool[picked].index] += 1;
+      citations.push({ citing, cited: pool[picked].index, year: papers[citing].year, weight: 1 });
+    }
+  });
+  return { citations, citeCount };
+}
+
+/** Each citing paper contributes 1, split equally across the papers it cites. */
+function weightCitations(citations) {
+  const outgoing = new Map();
+  citations.forEach((edge) => {
+    outgoing.set(edge.citing, (outgoing.get(edge.citing) || 0) + 1);
+  });
+  citations.forEach((edge) => {
+    edge.weight = 1 / outgoing.get(edge.citing);
+  });
+}
+
+function receivedCapital(citations, paperCount) {
+  const received = new Array(paperCount).fill(0);
+  citations.forEach((edge) => { received[edge.cited] += edge.weight; });
+  return received;
+}
+
+function citationMassFromEdges(citations, paperCount) {
+  const byPaper = Array.from({ length: paperCount }, () => new Map());
+  citations.forEach(({ cited, year, weight }) => {
+    byPaper[cited].set(year, (byPaper[cited].get(year) || 0) + weight);
+  });
+  return byPaper.map((map) => {
+    const rows = [...map.entries()].sort((a, b) => a[0] - b[0]);
+    const total = rows.reduce((sum, [, weight]) => sum + weight, 0);
+    let cum = 0;
+    return rows.map(([year, weight]) => {
+      cum += weight;
+      return { year, cum, total };
+    });
+  });
 }
 
 function personTotalOn(corpus, person, paperSet, role) {
@@ -488,9 +659,16 @@ function computeMetrics(corpus, view) {
   const viewPapers = touched.length ? touched : paperSet;
   const viewMark = new Set(viewPapers);
   const citeInView = new Array(M).fill(0);
-  corpus.citations.forEach((edge) => {
-    if (viewMark.has(edge.citing) && viewMark.has(edge.cited)) citeInView[edge.cited] += 1;
-  });
+  if (corpus.useGlobalCitations) {
+    papers.forEach((paper, index) => {
+      citeInView[index] = paper.citedByCount || 0;
+    });
+  } else {
+    corpus.citations.forEach((edge) => {
+      if (viewMark.has(edge.citing) && viewMark.has(edge.cited)) citeInView[edge.cited] += 1;
+    });
+  }
+  const wrotePaper = (share) => corpus.everyoneAuthored || share.role === "author";
   const activeTopics = topics.filter((topic) => viewPapers.some((i) => papers[i].primary === topic));
 
   const selectedTotals = subset.map((p) => totals[p]);
@@ -597,7 +775,7 @@ function computeMetrics(corpus, view) {
     fmpReviewer.push(reviewerPrice);
     fmpReplicator.push(replicatorPrice);
     const authored = inField.filter((paperIndex) => (
-      corpus.shares[paperIndex].some((share) => share.role === "author" && subsetSet.has(share.person))
+      corpus.shares[paperIndex].some((share) => wrotePaper(share) && subsetSet.has(share.person))
     ));
     premiumReviewer.push(sumRole("reviewer", authored, everyone) - reviewerPrice);
     premiumReplicator.push(sumRole("replicator", authored, everyone) - replicatorPrice);
@@ -672,7 +850,7 @@ function computeMetrics(corpus, view) {
     const cites = [];
     corpus.shares.forEach((row, i) => {
       if (!viewMark.has(i)) return;
-      if (row.some((s) => s.person === p && s.role === "author")) cites.push(citeInView[i]);
+      if (row.some((s) => s.person === p && wrotePaper(s))) cites.push(citeInView[i]);
     });
     hVals.push(hIndex(cites));
     i10Vals.push(cites.filter((c) => c >= 10).length);
@@ -750,7 +928,7 @@ function computeMetrics(corpus, view) {
   const shareGrand = sharePeople.reduce((sum, person) => sum + totals[person], 0);
 
   const authorsOn = (paperIndex) => corpus.shares[paperIndex]
-    .filter((share) => share.role === "author" && subsetSet.has(share.person))
+    .filter((share) => wrotePaper(share) && subsetSet.has(share.person))
     .map((share) => share.person);
   const authorSet = new Set();
   viewPapers.forEach((paperIndex) => authorsOn(paperIndex).forEach((person) => authorSet.add(person)));
@@ -772,7 +950,9 @@ function computeMetrics(corpus, view) {
   const homeField = (person) => {
     const score = new Map();
     viewPapers.forEach((paperIndex) => {
-      const cap = corpus.author[person][paperIndex];
+      const cap = corpus.author[person][paperIndex]
+        + corpus.reviewer[person][paperIndex]
+        + corpus.replicator[person][paperIndex];
       if (cap <= 0) return;
       const topic = papers[paperIndex].primary;
       score.set(topic, (score.get(topic) || 0) + cap);
@@ -790,11 +970,12 @@ function computeMetrics(corpus, view) {
   const scholarProfile = (person) => {
     const papersOut = [];
     viewPapers.forEach((paperIndex) => {
-      const authored = corpus.shares[paperIndex].some((row) => row.person === person && row.role === "author");
+      const authored = corpus.shares[paperIndex].some((row) => row.person === person && wrotePaper(row));
       if (!authored) return;
       papersOut.push({
         id: paperIndex,
-        label: `Paper ${paperIndex + 1}`,
+        label: papers[paperIndex].label || `Paper ${paperIndex + 1}`,
+        short: papers[paperIndex].short || papers[paperIndex].label || `Paper ${paperIndex + 1}`,
         year: papers[paperIndex].year,
         ac: corpus.author[person][paperIndex],
         citations: citeInView[paperIndex],
@@ -817,7 +998,7 @@ function computeMetrics(corpus, view) {
       const profile = scholarProfile(person);
       return {
         id: person,
-        label: `Scholar ${person + 1}`,
+        label: corpus.names?.[person] || `Scholar ${person + 1}`,
         topic: homeField(person),
         citations: received,
         detail: `${received} citation${received === 1 ? "" : "s"} received`,
@@ -840,12 +1021,12 @@ function computeMetrics(corpus, view) {
   ];
   const matrixScholars = [...subset]
     .sort((a, b) => a - b)
-    .map((person) => ({ id: person, label: `Scholar ${person + 1}`, n: person + 1 }));
+    .map((person) => ({ id: person, label: corpus.names?.[person] || `Scholar ${person + 1}`, n: person + 1 }));
   const matrixPapers = [...viewPapers]
     .sort((a, b) => a - b)
     .map((paperIndex) => ({
       id: paperIndex,
-      label: `Paper ${paperIndex + 1}`,
+      label: papers[paperIndex].label || `Paper ${paperIndex + 1}`,
       n: paperIndex + 1,
       topic: papers[paperIndex].primary,
     }));
@@ -873,12 +1054,12 @@ function computeMetrics(corpus, view) {
     corpus: {
       num_manuscripts: viewPapers.length,
       num_contributors: subset.length,
-      num_citations: citeInView.reduce((sum, count) => sum + count, 0),
+      num_citations: viewPapers.reduce((sum, index) => sum + citeInView[index], 0),
       num_retractions: viewPapers.filter((i) => papers[i].retracted).length,
       topics,
       papers: viewPapers.map((i) => ({
         id: String(i),
-        label: `Paper ${i + 1}`,
+        label: papers[i].label || `Paper ${i + 1}`,
         topic: papers[i].primary,
         date: papers[i].date,
         citations: citeInView[i],
@@ -886,7 +1067,7 @@ function computeMetrics(corpus, view) {
       contributors: (fieldActive ? [...scholarsInField] : [...Array(N).keys()]).map((index) => ({
         id: String(index),
         index,
-        label: `Scholar ${index + 1}`,
+        label: corpus.names?.[index] || `Scholar ${index + 1}`,
         capital: totals[index],
         selected: subsetSet.has(index),
       })),
@@ -896,7 +1077,7 @@ function computeMetrics(corpus, view) {
     network: {
       nodes: viewPapers.map((i) => ({
         id: i,
-        label: `Paper ${i + 1}`,
+        label: papers[i].short || papers[i].label || `Paper ${i + 1}`,
         topic: papers[i].primary,
         year: papers[i].year,
         citations: citeInView[i],
@@ -938,7 +1119,7 @@ function computeMetrics(corpus, view) {
       time_efficiency: metric(paths.years.length > 1 ? (last - first) / yearsSpan : 0),
       charts: {
         allocation_weights: {
-          labels: weightPairs.map((row) => `Paper ${row.i + 1}`),
+          labels: weightPairs.map((row) => papers[row.i].short || papers[row.i].label || `Paper ${row.i + 1}`),
           values: weightPairs.map((row) => row.v / Math.max(academic, 1e-12)),
         },
         mix_role: { labels: ["Papers", "Peer reviews", "Replications"], values: mixRole },

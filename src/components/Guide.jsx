@@ -8,7 +8,7 @@ const GROUP_INTRO = {
   distribution: "How unevenly credit is split on the papers held by the selected contributors, and how that compares with the whole corpus.",
   graph: "Shape of the co-authorship graph among the selected contributors: whether it is connected, how many pieces it has, and how dense the collaborations are.",
   health: "How the corpus changes over the yearly snapshots: capital growth, the level and volatility of review and replication capital, and which field holds the most capital. Regional, population, GDP, and purchasing-power versions need data this corpus does not have.",
-  traditional: "The usual citation indexes — counts, h-index, g-index, and i10 — recomputed on the papers and people in the current selection. These are the legacy indexes, separate from the co-authorship graph.",
+  traditional: "Citation count, h-index, g-index, and i10 for the current selection. A citation counts only when both papers are in the corpus, so the counts match the citation network.",
 };
 
 export default function Guide({ group, metric }) {

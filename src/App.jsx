@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { computeMetrics, generateCorpus, shareParams } from "./engine";
+import { CORPUS_DEFAULTS, computeMetrics, generateCorpus, shareParams } from "./engine";
 import Sidebar from "./components/Sidebar";
 import Figures from "./components/Figures";
 import CitationNetwork from "./components/CitationNetwork";
@@ -17,12 +17,12 @@ const VIEWS = [
 ];
 
 const INITIAL = {
-  numManuscripts: 50,
-  numContributors: 80,
-  citationDensity: 0.4,
-  creditInequality: 80,
-  retractionRate: 0.05,
-  seed: 105,
+  numManuscripts: CORPUS_DEFAULTS.numManuscripts,
+  numContributors: CORPUS_DEFAULTS.numContributors,
+  citationDensity: CORPUS_DEFAULTS.citationDensity,
+  creditInequality: CORPUS_DEFAULTS.creditInequality,
+  retractionRate: CORPUS_DEFAULTS.retractionRate,
+  seed: CORPUS_DEFAULTS.seed,
   subsetMode: "all",
   topN: 10,
   contributorIndex: null,
@@ -54,7 +54,7 @@ export function evaluate(settings) {
     numManuscripts: Number(settings.numManuscripts),
     numContributors: Number(settings.numContributors),
     citationDensity: Number(settings.citationDensity),
-    retractionRate: Number(settings.retractionRate),
+    retractionScale: Number(settings.retractionRate),
     seed: Number(settings.seed) || 105,
     sharesDist: shares.sharesDist,
     paretoAlpha: shares.paretoAlpha,
